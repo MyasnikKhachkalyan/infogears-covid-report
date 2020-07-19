@@ -1,0 +1,308 @@
+---
+title: "Closer look to InfoGears dataset"
+author: "Myasnik Khachkalyan"
+date: "7/19/2020"
+output:
+  html_document:
+    df_print: paged
+knit: (function(input_file, encoding) { out_dir <- 'docs'; rmarkdown::render(input_file,
+  encoding=encoding, output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+header-includes: \usepackage{caption}
+---
+\captionsetup[table]{labelformat=empty}
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = F, warning = F)
+```
+
+## Dataset
+
+InfoGears provide the dataset. The dataset aims to monitor public health by relying on crowdsourcing and self-reporting. The observations are anonymous. The data is collected by having an assessment quiz, which one can find in the infogears.org website. The target audience is US people mostly targeted Glendale, Burbank, Pasadena (California), and neighboring areas, which are differentiated using zip codes. The structure of the dataset is shown below.
+
+```{r fig.width=4, fig.height=4}
+library(dplyr)
+library(ggplot2)
+library(openxlsx)
+library(stringr)
+library(knitr)
+covid <- read.xlsx('covid-07-13-2020.xlsx', sheet = 1, startRow = 1, colNames = TRUE)
+state_zip_codes <- read.delim('US.txt')[, c(2,3, 4,6)]
+colnames(state_zip_codes) <- c('zipCode', 'Neighborhood',  'State', 'City')
+covid <- covid %>% mutate(gender = ifelse(gender %in% c('male', 'female'), gender, 'other')) %>% mutate(leftHomeTimes=ifelse(leftHomeTimes=='didNotLeft', 'didNotLeave', leftHomeTimes))
+covid <- covid[,-c(14)]
+colnames(covid)[1] <- 'age_interval'
+str(covid,vec.len=2)
+```
+
+The total number of observations is 300088 and 33 observations originally. The most vital variables are virusTest, houseHoldCount, faceCoverings, leftHomeTimes, and reasons, symptoms also gender, age_interval. Almost all the variables were used in the process of visualizations. In the structure, the face-covering variable might seem NA, but it’s not. The first couple hundred rows are NA because the question was not in the assessment, and it was added later. The Date might seem strange as well, but it is excel converted date format, I will change it for the further use of bellow.
+
+To get a general understanding of the dataset, there are some findings of how it is distributed between different variables.
+
+Besides some minor findings, there will be some hypothesizes, which will be proven by the graph.
+
+* The hypothesizes are:
+  + The more members of the family, the more impact on the mental health of the person.
+  + Even if one does not have any symptoms that do not guarantee that he/she is not infected.
+  + Wearing masks or face covering when leaving home is helping at least developing serious symptoms of COVID, thus lowering the risk of being infected.
+  
+In the end, there will also be a small prediction section. Using the number of infected ones and some other factors from our dataset, we will find out approximately how many more infected people are there that are not in our dataset.
+
+\newpage
+
+## State Distribution
+
+As already was said, the targeted Glendale, Burbank, Pasadena (California). To test whether they got the result they wanted, I generated a table, which could be seen above. We can also see what cities and states are the most active in doing the assessments of the InfoGears website.
+
+```{r fig.width=4, fig.height=4}
+states_date_df <- covid %>% filter(str_detect(zipCode, pattern ='^[0-9]{5}$')) %>% mutate(createdAt = as.Date(as.character(as.Date(createdAt, origin = "1899-12-30"))), zipCode = as.numeric(zipCode)) %>% right_join(state_zip_codes, by = "zipCode") %>% filter(!is.na(guid)) %>% mutate(day=as.numeric(format(createdAt, format = "%d"))) %>% mutate(month=format(createdAt,"%B"))
+
+
+states_df <- states_date_df %>% group_by(State) %>% summarise(Count = n()) %>% arrange(desc(Count)) %>% top_n(n = 20)
+cities_df <- states_date_df %>% group_by(City) %>% summarise(Count = n()) %>% arrange(desc(Count)) %>% top_n(n = 20)
+
+california_d_m <- states_date_df %>% group_by(day, month, State) %>% filter(State=='California') %>% summarise(Count = n())
+kable(list(states_df, cities_df), caption = 'Top 20 States and Cities by the number of observations')
+```
+
+As we can notice from the tables, the absolute winner is State California, and city Los Angles. Also, we can infer from the graph that the target that InfoGears set was gotten partially.
+
+As California has the most number of observations, let's see its numbers distributed in the days and months separately to have a more careful look at it. Also, we will find when was the pick in California.
+
+```{r fig.width=4, fig.height=4}
+california_d_m$month_f <- factor(california_d_m$month, levels = c('April', 'May', 'June', 'July'))
+ggplot(california_d_m, aes(x=day)) + geom_line(aes(y=Count)) + facet_grid(.~month_f) + labs(title="Califirnia's observation", x='Month Days', subtitle = 'Distributed by month')
+```
+
+The graph might seem incomplete, but it is not, because the observations started in mid-April and my resulted dataset has observations till mid-July. From the graph, we can infer that around 5-10th of July was the pick for California's observations. All other days have relatively similar results having numbers around 150-250.
+
+Let's see how other Top 10 states are doing. The graph bellow will show the number of observations through time for Top 10 states other than California.
+
+```{r}
+# did not add the given height and weight as it squeezed the graph and was hard to spot smth there
+
+group_d_S <- states_date_df %>% filter(State!='California' & State %in% c('Florida','Texas', 'Pennsylvania', 'Ohio', 'New York', 'Arizona', 'Michigan', 'Illinois', 'Indiana', 'North Carolina')) %>% group_by(createdAt, State) %>% summarise(Count = n(),  .groups='drop')
+
+ggplot(group_d_S, aes(x=createdAt, y=Count, color=State)) + geom_line() + labs(title='Top 10 states by the number of observations', x='Month', subtitle = 'Except California')
+```
+
+Each big break in the graph corresponds to the 1st of that month, April is not visible as a label because observation started from April 16. Each state is an individual line with its color. You can find the State-color couples in the right of the plot. We can see that almost in all states, the pick of the number of observations is reached between mid-Jun and mid-Jul.
+
+\newpage
+
+## Gender distibutions in the dataset
+
+After doing some cleanups in the gender column of the dataset, we got three genders types. The standard ones, male and female, and all other observations that either did not mention gender or mention another gender are under-label other. Let's see the distribution of the gotten column in the graph below.
+
+
+```{r fig.width=4, fig.height=4}
+gender_df <- covid %>% select('gender') %>% group_by(gender) %>% summarise(count = n()) %>% mutate(percentage = count/sum(count) * 100 ) %>% mutate(ypos = cumsum(percentage)- 0.5*percentage )
+
+ggplot(gender_df, aes(x=0, y=percentage, fill=gender)) + geom_bar(stat = 'identity', width=1, color="white") + coord_polar("y", start=0) + theme_void() + geom_text(aes(label = paste0(round(percentage), '%')), position = position_stack(vjust = 0.5))+ scale_x_continuous(expand = c(0,0)) + ggtitle('Gender Distribution')
+```
+
+
+As we can see, around 70 percent of the assessments are done by the female. The percentage of the males is 29, and the left 1 percent is all other observation having gender, neither female nor male.
+
+\newpage
+
+## Age distribution in the dataset
+
+In the dataset, the column about ages is age_interval column. It includes eight groups of ages in which the observations are distributed.
+
+* Those groupes are 
+  + under 18
+  + from 18-25
+  + from 26-35
+  + from 36-45
+  + from 46-55
+  + from 56-65
+  + from 66-75
+  + above 75
+
+```{r fig.width=4, fig.height=4}
+age_df <- covid %>% select('age_interval') %>% group_by(age_interval) %>% summarise(count = n()) %>% mutate(perc = count/sum(count))
+
+ggplot(na.omit(age_df), aes(x=age_interval, y=perc)) + geom_bar(stat = 'identity') + labs(title='Age Distribution', x='Age Interval', y='Percentage') + scale_y_continuous(breaks = c(0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.3), labels = scales::percent(c(0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.3))) + theme_minimal() + scale_x_discrete(labels = c('-18', '18-25', '26-35', '36-45', '46-55', '56-65', '66-75', '75+')) + theme(axis.text.x = element_text(angle = 90))
+```
+
+As we saw in the graph, most of the observant are between 56 and 65. The least percentage has the age interval of bellow 18, which is almost 0. The second least one is above 75, around 3 percent. The observations having age interval 26-35 and 66-75 has almost equal percentages(around 14.5) in the dataset. The same can be said about 36-45 and 46-55, but those have a higher percentage (around 20) than those two.
+
+\newpage
+
+
+## Positive cases
+
+Arguably the most critical column is virisTest column, which indicates the person doing the assessment had been tested positively, negatively, or had not bee tested at all. This column will take another look when making predictions on the dataset.
+
+* Number of
+  + positive tests is 204
+  + negative tests is 4382
+  + the rest had not been tested
+
+Let's see the distribution among gender and age intervals of people with positive tests in the graph below.
+
+```{r fig.width=4, fig.height=4}
+ggplot(covid[covid$virusTest=='positive', ], aes(x=age_interval, fill=gender)) + geom_bar() + coord_flip() + scale_x_discrete(labels = c('18-25', '26-35', '36-45', '46-55', '56-65', '66-75', '75+')) + labs(x='Age ranges', y='Count', title = 'Positive Tests distribution')
+```
+
+As you can infer from the graph the most part of the infected people are of age from 36 to 45 and most of them are female. 
+
+* Other facts: 
+  + All people with the positive cases above 75 are males. 
+  + In the age interval of 26-35 the distribution amount males and females are equal. 
+  + The age intervals 46-55 and 56-65 have same number of positive cases but the gender distribution is slightly different
+  + The age interval bellow 18 does not have any observation with positive test.
+
+\newpage
+## Mental Condition
+
+A mental state is essential in lockdown days. The mental health of a person can easily be infected as he/she sits at home all day with the thoughts of not being infected, and worrying about his/her health and health of the close people. Some studies show that a lot of people's mental condition suffered because of the Coronavirus and total lockdown, due to the factors that have been mentioned above and others. Another important factor can be the number of households that one lives in. Of course, they were part of everyday life before the lockdown, but for some people being all days for months with the same people for 24/7 might be a hard task. Think about what will be with the mental condition of that person if the number of households is big.
+
+Hypothesis: The more members of the family, the more impact on the mental health of the person.
+
+```{r fig.width=4, fig.height=4}
+houseHold_mentalHealth_virus_df <- covid %>% select(mentalHealthImpact, householdHeadcount, virusTest, ip) %>% filter(householdHeadcount<10 & householdHeadcount > 0 & householdHeadcount%%1==0)
+
+gb_household <- houseHold_mentalHealth_virus_df %>% group_by(householdHeadcount) %>% summarise(count = n())
+gb_household_MH <- houseHold_mentalHealth_virus_df %>% group_by(householdHeadcount, mentalHealthImpact) %>% summarise(count = n()) %>% mutate(perc = count/gb_household[householdHeadcount,2])
+gb_household_MH$perc <- unlist(gb_household_MH$perc)
+
+ggplot(gb_household_MH, aes(x=mentalHealthImpact, y=perc, fill=mentalHealthImpact)) + geom_bar(stat = 'identity') + facet_grid(householdHeadcount~.) +  coord_flip() + scale_y_continuous(breaks = c(0, 0.2, 0.4, 0.6), labels = scales::percent(c(0, 0.2, 0.4, 0.6))) + scale_x_discrete(labels = c('No impact', 'Significant impact', 'Some impact')) + labs(title = 'Mental Health impact vs Household count', x='Mental health', y='Percentage', tag = 'Household member count') + theme(legend.position="none", plot.margin = margin(0,0.5,0,0, "cm"), plot.tag.position = c(1.02, 0.5), plot.tag = element_text(angle=-90)) 
+```
+
+The graph above shows that there was some or significant impact on most people's mental health.
+
+The blue bar shows us that almost in any number of households, there was some impact. In the hypothesis, we mention the more the household, the more the impact, and it might seem we have a contradiction here as some impact bar high is for households with 1, 2, 3. We mention the one side of the coin; the other side is the case we have here luck communication, I guess. Of course, we cannot say for sure because, when we talk about some impact, different people mean different aspects. 
+
+The bar we are interested in more for this hypothesis is the green one. Furthermore, we definitely can see that its the highest for households with 8 and 9 people. Households with 1, 3, 5, and 6 members have relatively the same percentage. The most surprising here is the observations with seven-member households. All others are almost what we expected.
+
+\newpage
+
+## Symptoms and Virus positive tests
+Being aware of symptoms and be ready to react to them is very important in this pandemic. Of course, having no symptoms means that the chance of being infected with coronavirus is low. But not 0.
+
+In our country, the number of people who still think that corona does not exist because some people don't have symptoms but tested positive, and they think this whole thing is a lie. This pie plot is for them to see that most of the coronavirus cases do not show any signs, and one might feel totally fine, have no symptoms, but still be infected and able to pass the infection. 
+
+Hypothesis: Even if one do not have any symptoms that does not guarantee that he/she is not infected.
+
+```{r fig.width=4, fig.height=4}
+symptomsCount <- covid %>% mutate(seriousSymptoms = temperature + persistentCough + difficultyBreathing) %>% mutate(otherSymptoms = headAche + fatigue + irritatedEyes + bodyAche + lossOfSmell + soreThroat + disorientation + diarrhea) %>% mutate(overallSymptoms = otherSymptoms + seriousSymptoms)
+sympltom_positiveTest_df <- symptomsCount %>% group_by(overallSymptoms, virusTest) %>% filter(virusTest=='positive') %>% summarise(count=n())
+sympltom_positiveTest_df <- sympltom_positiveTest_df %>% mutate(perc = count/sum(sympltom_positiveTest_df$count))
+
+ggplot(sympltom_positiveTest_df, aes(x=0, y=perc, fill=overallSymptoms)) + geom_bar(stat = 'identity', width=1, color="#d6ffab") + coord_polar("y", start=0) + theme_void() + geom_text(aes(label = overallSymptoms), color='white', size=3, angle=-45, position = position_stack(vjust = 0.5))+ scale_x_continuous(expand = c(0,0)) + ggtitle('Positive cases Distribution among symptoms') + theme(legend.position="none")
+```
+
+The numbers indicate the number of symptoms.
+
+As we can infer from the graph, most people with positive cases do not have any symptoms. Thus, the hypothesis that having no symptoms does not guarantee being not infected is correct. Moreover, this is proof that everyone should know that virus exists and is hardly noticeable in some cases. So do not listen to stupid ideas, be safe, be aware.
+
+\newpage
+
+## The more the Age the more the Symptoms
+
+The number of people having serious symptoms, temperature, persistent cough, and breathing difficulties are 1179. Not surprisingly, most of them are of age from 46 and more, as it has been told from the day one that virus is more dangerous for older people, so there will be more symptoms for them. See the bar chart below.
+
+```{r fig.width=4, fig.height=4}
+seriousSympt_age_int <- symptomsCount  %>% filter(seriousSymptoms > 0) %>% group_by(age_interval) %>% summarise(count=n())
+
+ggplot(seriousSympt_age_int, aes(x=age_interval, y=count)) + geom_bar(stat = 'identity') + coord_flip() + scale_x_discrete(labels = c('-18', '18-25', '26-35', '36-45', '46-55', '56-65', '66-75', '75+')) + labs(x='Age interval', y='Number of having 1 or more serious symptoms', title ='1 or more serious symptom vs age')
+```
+\newpage
+
+## Distribution between reason for leaving home and the age
+
+To leave home in this pandemic is always a risk. There are a couple of reasons in our dataset why people left home. Let's see whether the reason worth the risk or not.
+
+```{r fig.width=4, fig.height=4}
+for_exercise <- covid %>% filter(leftForExercise == 1) %>% mutate(reasonLeftHome = 'excercise') %>% select(reasonLeftHome, age_interval)
+for_shopping <- covid %>% filter(leftForShopping == 1) %>% mutate(reasonLeftHome = 'shopping') %>% select(reasonLeftHome, age_interval)
+for_work <- covid %>% filter(leftForWork == 1) %>% mutate(reasonLeftHome = 'work') %>% select(reasonLeftHome, age_interval)
+for_other <- covid %>% filter(leftForOther == 1) %>% mutate(reasonLeftHome = 'other') %>% select(reasonLeftHome, age_interval)
+reason_age_df <- rbind(rbind2(for_exercise, for_shopping), rbind(for_work, for_other))
+
+reason_age_df$age_interval <- as.factor(reason_age_df$age_interval)
+levels(reason_age_df$age_interval) <- c('-18', '18-25', '26-35', '36-45', '46-55', '56-65', '66-75', '75+')
+
+ggplot(reason_age_df, aes(reasonLeftHome, age_interval)) + geom_count(col="tomato3") + labs(y="Age interval", x="Reason leaving home", title="Reason leaving home vs age intervals", size='Number of observations', subtitle = 'Counts Chart') + theme_minimal() + theme(axis.text.x =element_text(angle=-90, vjust = 0.5))
+```
+
+As we see, the number of people, around 2500, left home for shopping and they were the age of 56-65. The next graph will see a more detailed version of the graph above.
+
+```{r fig.width=4, fig.height=4}
+ggplot(reason_age_df, aes(reasonLeftHome, fill=age_interval)) + geom_bar() + labs(y="Count", x="Reason leaving home", title="Reason leaving home vs age intervals", fill='Age interval', subtitle = 'Bar Plot')
+```
+
+Shopping is a valid reason to leave home. People must do grocery shopping to live and have an excellent immune system to overcome these hard times. Leaving for exercise is also a good reason to leave home to stay healthy and a healthy lifestyle. Surprisingly people leaving home for work are less than for other affairs. We do not know what each person meant by others so let's not judge)
+
+\newpage
+
+## Face covering effeciency 
+
+Wearing masks and covering the face is very important, but there are still some uncertainties, whether useful or not. As most of the people in the dataset are not tested, I will try to answer that question using the number of serious symptoms. Again, having no symptoms does not guarantee that one is not infected, but the probability is still very low.
+
+Hypothesis: Wearing masks or face covering when leaving home helps at least not to develop serious symptoms of COVID, thus lowering the risk of being infected.
+
+```{r fig.width=4, fig.height=4}
+left_home_mask_wearing <- symptomsCount  %>% filter(!is.na(faceCovering) & leftHomeTimes != 'didNotLeave') %>% group_by(faceCovering, leftHomeTimes, seriousSymptoms) %>% summarise(count=n())
+
+left_home_mask_wearing$leftHomeTimes <- as.factor(left_home_mask_wearing$leftHomeTimes)
+levels(left_home_mask_wearing$leftHomeTimes) <- c('1 time', '2+ times')
+
+ggplot(left_home_mask_wearing, aes(x=faceCovering, y=count, fill=seriousSymptoms)) + geom_bar(stat='identity') + facet_grid(.~leftHomeTimes, ) + labs(title = 'Face covering frequency', x='Face Covering', y='Count', fill='Serious Symptoms', subtitle = 'Faceted by the times left home') + theme(axis.text.x =element_text(angle=-90, vjust = 0.5))
+```
+
+On the graph above, we can see that wearing face coverings always or sometimes help be safe and do not catch any symptoms. A number of those wearing masks and having 0 serious symptoms is way more than those who wore masks or face covering and caught a serious symptom.
+
+\newpage
+
+## Thos who does not wear face coverings does not risk only themselves, also their household members.
+
+By not wearing face-covering, we risk not only our health but also the health of household members. 
+
+Let's see how much people's health is endangered by because of irresponsible ones. We will concentrate on those having direct contact with infected people.
+
+```{r fig.width=4, fig.height=4}
+neverWoreMask <- symptomsCount  %>% filter(faceCovering == 'Never' & leftHomeTimes != 'didNotLeave' & overallSymptoms > 0 & householdHeadcount > 0 & householdHeadcount < 10)
+neverWoreMask$exposureLevel <- as.factor(neverWoreMask$exposureLevel)
+levels(neverWoreMask$exposureLevel) <- c('Do not know', 'Have direct contact')
+ggplot(neverWoreMask, aes(x=leftHomeTimes, fill=exposureLevel)) + geom_bar() + scale_y_continuous(breaks = c(0, 3, 6, 20, 28, 38)) + labs(title='Never wore face covering', subtitle = 'Overall sympoms 1 or more ', x='Number of times left home', y='Count', fill='Exposure level') + scale_x_discrete(labels =c('1', '2+'))
+
+direct_contacted_hhc <- neverWoreMask %>% filter(exposureLevel=='Have direct contact' & virusTest!='positive' & !duplicated(ip)) %>% 
+  summarise(mean = round(mean(householdHeadcount)), count=n()) 
+meanHHCDirect_contact <- direct_contacted_hhc[1,1]
+count_direct_contact <- direct_contacted_hhc[1,2]
+prrbly_inf <- count_direct_contact * meanHHCDirect_contact
+```
+
+Number of people from different IP having direct contact with an infected person is 6
+Mean of household count among them is 3
+Those who did not wear face-covering and have contact with infected people are most probably infected.
+By having the numbers above, we can calculate how many people have a high probability of being infected.
+Via calculations, we can find that probably around 18  more people are infected.
+
+## More cases than we see
+
+```{r fig.width=4, fig.height=4}
+numOfPosotive <- nrow(covid[covid$virusTest=='positive',])
+uniqueCases <- length(unique(covid[covid$virusTest=='positive',]$ip))
+meanHHCount <- round(mean(houseHold_mentalHealth_virus_df[houseHold_mentalHealth_virus_df$virusTest=='positive' & !duplicated(houseHold_mentalHealth_virus_df$ip),]$householdHeadcount))
+possible_infect <- uniqueCases * meanHHCount - uniqueCases
+```
+
+Number of people tested positive in our dataset is 204, from which unique IPs have 187.
+That means we can assume that 187 households have at least one infected member.
+The rounded mean number of household members of those unique cases is 3.
+If there are one or more infected people in the household, the chance of other members being infected is very high.
+That being said, we can calculate how much people approximately is infected but is not in our observations'
+
+Possible number of people which we can get based on our dataset, not included in it, is 374.
+
+Let's also not forget the number we got from the calculations above.
+Thus, the overall number of possibly infected that we do not have in our dataset is 392.
+
+\newpage
+
+## Conclusion
+
+InfoGears is doing a great job of collecting all this data. The data helps people of the US stay aware of whether there are infected people in their neighborhoods or not. They have a lot of great charts and visualizations on their website(infogears.org). Due to this dataset in this report, we also found some interesting findings, such as what age group was the most active in doing these assessments. We can infer that people of that age group might also be the overall more informed and concerned ones. We found out what is the most common reason for people to leave home. Alongside this, we have learned what people's attitude towards wearing face coverings is and about its effectiveness. We found the distribution of symptoms among age. We have proved a couple of well-known hypotheses using the dataset. We also tried some predictions about the number of people who might be infected but are not in our dataset as positive tested cases. I hope you enjoyed the report and found some interesting facts that might help you to be informed.
